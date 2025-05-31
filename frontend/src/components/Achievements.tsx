@@ -29,8 +29,9 @@ import {
   Shield
 } from '@mui/icons-material';
 import { useQuery, useMutation, useQueryClient } from 'react-query';
-import { userAPI, achievementAPI } from '../api/client';
-import { User, Achievement, UserAchievement } from '../types';
+import { achievementAPI } from '../api/client';
+import { Achievement, UserAchievement } from '../types';
+import { useAuth } from '../contexts/AuthContext';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -40,6 +41,7 @@ interface TabPanelProps {
 
 function TabPanel(props: TabPanelProps) {
   const { children, value, index, ...other } = props;
+
   return (
     <div
       role="tabpanel"
@@ -48,25 +50,22 @@ function TabPanel(props: TabPanelProps) {
       aria-labelledby={`achievement-tab-${index}`}
       {...other}
     >
-      {value === index && <Box sx={{ pt: 3 }}>{children}</Box>}
+      {value === index && children}
     </div>
   );
 }
 
 const Achievements: React.FC = () => {
-  const [userId] = useState(parseInt(localStorage.getItem('userId') || '1'));
+  const { user } = useAuth();
   const [tabValue, setTabValue] = useState(0);
   const [selectedAchievement, setSelectedAchievement] = useState<Achievement | null>(null);
   const [confirmDialog, setConfirmDialog] = useState(false);
-  const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' as 'success' | 'error' });
+  const [snackbar, setSnackbar] = useState({ 
+    open: false, 
+    message: '', 
+    severity: 'success' as 'success' | 'error' 
+  });
   const queryClient = useQueryClient();
-
-  // Fetch user data
-  const { data: user } = useQuery<User>(
-    ['user', userId],
-    () => userAPI.getById(userId),
-    { enabled: !!userId }
-  );
 
   // Fetch all achievements
   const { data: achievements } = useQuery<Achievement[]>(
@@ -76,18 +75,17 @@ const Achievements: React.FC = () => {
 
   // Fetch user achievements
   const { data: userAchievements } = useQuery<UserAchievement[]>(
-    ['userAchievements', userId],
-    () => achievementAPI.getUserAchievements(userId),
-    { enabled: !!userId }
+    ['userAchievements'],
+    () => achievementAPI.getUserAchievements(),
+    { enabled: !!user }
   );
 
   // Unlock achievement mutation
   const unlockMutation = useMutation(
-    (achievementId: number) => achievementAPI.unlock({ user_id: userId, achievement_id: achievementId }),
+    (achievementId: number) => achievementAPI.unlock(achievementId),
     {
       onSuccess: () => {
-        queryClient.invalidateQueries(['userAchievements', userId]);
-        queryClient.invalidateQueries(['user', userId]);
+        queryClient.invalidateQueries(['userAchievements']);
         setSnackbar({ 
           open: true, 
           message: 'Achievement unlocked! 🎉', 
@@ -149,6 +147,14 @@ const Achievements: React.FC = () => {
 
   const unlockedCount = userAchievements?.length || 0;
   const totalCount = achievements?.length || 0;
+
+  if (!user) {
+    return (
+      <Container maxWidth="lg" sx={{ py: 4 }}>
+        <Alert severity="error">Authentication required. Please sign in.</Alert>
+      </Container>
+    );
+  }
 
   return (
     <Container maxWidth="lg" sx={{ py: 4 }}>
@@ -270,33 +276,25 @@ const Achievements: React.FC = () => {
                           {achievement.description}
                         </Typography>
 
-                        {/* Cost */}
-                        <Box display="flex" justifyContent="center" alignItems="center" gap={1} mb={2}>
-                          <Star sx={{ color: '#FFD93D' }} />
-                          <Typography variant="h6" sx={{ fontWeight: 'bold' }}>
-                            {achievement.points_cost} Points
-                          </Typography>
-                        </Box>
+                        {/* Points Cost */}
+                        <Typography variant="h6" color="primary" gutterBottom>
+                          {achievement.points_cost} Points
+                        </Typography>
 
                         {/* Action Button */}
                         <Button
                           fullWidth
-                          variant={unlocked ? 'outlined' : 'contained'}
+                          variant={unlocked ? "outlined" : "contained"}
                           disabled={unlocked || !canAfford || unlockMutation.isLoading}
                           onClick={() => handleUnlock(achievement)}
-                          startIcon={unlocked ? <CheckCircle /> : (!canAfford ? <Lock /> : <EmojiEvents />)}
                           sx={{
-                            backgroundColor: unlocked ? 'transparent' : undefined,
-                            borderColor: unlocked ? '#4CAF50' : undefined,
-                            color: unlocked ? '#4CAF50' : undefined,
+                            backgroundColor: unlocked ? undefined : 
+                              canAfford ? undefined : '#ccc'
                           }}
                         >
-                          {unlocked 
-                            ? 'Unlocked!' 
-                            : !canAfford 
-                              ? `Need ${achievement.points_cost - (user?.points || 0)} more points`
-                              : 'Unlock'
-                          }
+                          {unlocked ? 'Unlocked! ✓' : 
+                           canAfford ? 'Unlock' : 
+                           'Not Enough Points'}
                         </Button>
                       </CardContent>
                     </Card>
@@ -307,52 +305,36 @@ const Achievements: React.FC = () => {
           </Grid>
         </TabPanel>
 
-        {filteredAchievements.length === 0 && (
-          <Box textAlign="center" py={8}>
-            <Typography variant="h6" color="text.secondary">
-              No achievements found in this category.
+        {/* Confirmation Dialog */}
+        <Dialog open={confirmDialog} onClose={() => setConfirmDialog(false)}>
+          <DialogTitle>Unlock Achievement?</DialogTitle>
+          <DialogContent>
+            <Typography paragraph>
+              Are you sure you want to unlock "{selectedAchievement?.title}" for {selectedAchievement?.points_cost} points?
             </Typography>
-          </Box>
-        )}
-      </motion.div>
+            <Typography variant="body2" color="text.secondary">
+              You currently have {user?.points || 0} points.
+            </Typography>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setConfirmDialog(false)}>Cancel</Button>
+            <Button onClick={confirmUnlock} variant="contained" disabled={unlockMutation.isLoading}>
+              {unlockMutation.isLoading ? 'Unlocking...' : 'Unlock'}
+            </Button>
+          </DialogActions>
+        </Dialog>
 
-      {/* Confirmation Dialog */}
-      <Dialog open={confirmDialog} onClose={() => setConfirmDialog(false)}>
-        <DialogTitle>Unlock Achievement</DialogTitle>
-        <DialogContent>
-          <Typography>
-            Are you sure you want to unlock "{selectedAchievement?.title}" for {selectedAchievement?.points_cost} points?
-          </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-            You will have {(user?.points || 0) - (selectedAchievement?.points_cost || 0)} points remaining.
-          </Typography>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setConfirmDialog(false)}>Cancel</Button>
-          <Button 
-            onClick={confirmUnlock} 
-            variant="contained" 
-            disabled={unlockMutation.isLoading}
-          >
-            {unlockMutation.isLoading ? 'Unlocking...' : 'Unlock'}
-          </Button>
-        </DialogActions>
-      </Dialog>
-
-      {/* Snackbar */}
-      <Snackbar
-        open={snackbar.open}
-        autoHideDuration={4000}
-        onClose={() => setSnackbar({ ...snackbar, open: false })}
-      >
-        <Alert 
-          severity={snackbar.severity} 
+        {/* Snackbar for notifications */}
+        <Snackbar
+          open={snackbar.open}
+          autoHideDuration={4000}
           onClose={() => setSnackbar({ ...snackbar, open: false })}
-          sx={{ width: '100%' }}
         >
-          {snackbar.message}
-        </Alert>
-      </Snackbar>
+          <Alert severity={snackbar.severity} onClose={() => setSnackbar({ ...snackbar, open: false })}>
+            {snackbar.message}
+          </Alert>
+        </Snackbar>
+      </motion.div>
     </Container>
   );
 };

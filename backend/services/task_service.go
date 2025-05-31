@@ -2,107 +2,94 @@ package services
 
 import (
 	"errors"
-	"time"
 	"fithero-backend/models"
 	"fithero-backend/repositories"
 	"gorm.io/gorm"
 )
 
-type TaskService interface {
-	GetAllTasks() ([]models.Task, error)
-	GetDailyTasks(userID uint, date time.Time) ([]models.DailyTask, error)
-	GenerateDailyTasks(userID uint, date time.Time) ([]models.DailyTask, error)
-	CompleteTask(taskID uint) (*models.DailyTask, error)
-}
-
-type taskService struct {
-	taskRepo repositories.TaskRepository
-	userService UserService
+type TaskService struct {
+	taskRepo        repositories.TaskRepositoryInterface
+	userRepo        repositories.UserRepositoryInterface
+	achievementRepo repositories.AchievementRepositoryInterface
 }
 
 // NewTaskService creates a new task service
-func NewTaskService(taskRepo repositories.TaskRepository, userService UserService) TaskService {
-	return &taskService{
-		taskRepo: taskRepo,
-		userService: userService,
+func NewTaskService(taskRepo repositories.TaskRepositoryInterface, userRepo repositories.UserRepositoryInterface, achievementRepo repositories.AchievementRepositoryInterface) *TaskService {
+	return &TaskService{
+		taskRepo:        taskRepo,
+		userRepo:        userRepo,
+		achievementRepo: achievementRepo,
 	}
 }
 
-// GetAllTasks returns all available tasks
-func (s *taskService) GetAllTasks() ([]models.Task, error) {
-	return s.taskRepo.GetAllTasks()
+// GetAllTasks returns all available tasks (public endpoint)
+func (s *TaskService) GetAllTasks() ([]models.Task, error) {
+	return s.taskRepo.GetAll()
 }
 
-// GetDailyTasks retrieves daily tasks for a user on a specific date
-func (s *taskService) GetDailyTasks(userID uint, date time.Time) ([]models.DailyTask, error) {
-	// Validate user exists
-	_, err := s.userService.GetUserByID(userID)
+// GenerateDailyTasks generates daily tasks for a specific user
+func (s *TaskService) GenerateDailyTasks(userID uint) ([]models.DailyTask, error) {
+	// Verify user exists
+	user, err := s.userRepo.GetByID(userID)
 	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, errors.New("user not found")
+		}
 		return nil, err
 	}
 
-	return s.taskRepo.GetDailyTasksByUserAndDate(userID, date)
-}
-
-// GenerateDailyTasks generates 3 random tasks for a user for a specific date
-func (s *taskService) GenerateDailyTasks(userID uint, date time.Time) ([]models.DailyTask, error) {
-	// Validate user exists
-	_, err := s.userService.GetUserByID(userID)
-	if err != nil {
+	// Check if user already has daily tasks for today
+	existingTasks, err := s.taskRepo.GetDailyTasksByUserID(userID)
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
 	}
 
-	// Check if daily tasks already exist for this date
-	existingTasks, err := s.taskRepo.GetDailyTasksByUserAndDate(userID, date)
-	if err != nil {
-		return nil, err
-	}
-
-	// If tasks already exist, delete them first
+	// If user already has tasks for today, return them
 	if len(existingTasks) > 0 {
-		err = s.taskRepo.DeleteDailyTasksByUserAndDate(userID, date)
-		if err != nil {
-			return nil, err
-		}
+		return existingTasks, nil
 	}
 
-	// Get 3 random tasks
-	randomTasks, err := s.taskRepo.GetRandomTasks(3)
+	// Generate new daily tasks based on user level
+	tasks, err := s.taskRepo.GetTasksByLevel(user.Level)
 	if err != nil {
 		return nil, err
 	}
 
-	if len(randomTasks) == 0 {
-		return nil, errors.New("no tasks available")
+	if len(tasks) == 0 {
+		return nil, errors.New("no tasks available for user level")
 	}
 
-	// Create daily tasks
+	// Create daily task entries for the user
 	var dailyTasks []models.DailyTask
-	for _, task := range randomTasks {
+	maxTasks := 3 // Generate 3 daily tasks
+	if len(tasks) < maxTasks {
+		maxTasks = len(tasks)
+	}
+
+	for i := 0; i < maxTasks; i++ {
+		task := tasks[i%len(tasks)] // Cycle through available tasks
 		dailyTask := models.DailyTask{
-			UserID:    userID,
-			TaskID:    task.ID,
-			Completed: false,
-			Date:      date,
+			UserID:      userID,
+			TaskID:      task.ID,
+			Task:        task,
+			IsCompleted: false,
+			Points:      task.Points,
 		}
 
-		err = s.taskRepo.CreateDailyTask(&dailyTask)
+		createdTask, err := s.taskRepo.CreateDailyTask(&dailyTask)
 		if err != nil {
 			return nil, err
 		}
-
-		// Load the task relationship
-		dailyTask.Task = task
-		dailyTasks = append(dailyTasks, dailyTask)
+		dailyTasks = append(dailyTasks, *createdTask)
 	}
 
 	return dailyTasks, nil
 }
 
-// CompleteTask marks a daily task as completed and awards points to the user
-func (s *taskService) CompleteTask(taskID uint) (*models.DailyTask, error) {
+// CompleteTask marks a daily task as completed for a specific user
+func (s *TaskService) CompleteTask(userID uint, dailyTaskID uint) (*models.DailyTask, error) {
 	// Get the daily task
-	dailyTask, err := s.taskRepo.GetDailyTaskByID(taskID)
+	dailyTask, err := s.taskRepo.GetDailyTaskByID(dailyTaskID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errors.New("daily task not found")
@@ -110,33 +97,119 @@ func (s *taskService) CompleteTask(taskID uint) (*models.DailyTask, error) {
 		return nil, err
 	}
 
+	// Authorization check: Ensure the task belongs to the requesting user
+	if dailyTask.UserID != userID {
+		return nil, errors.New("access denied: you can only complete your own tasks")
+	}
+
 	// Check if task is already completed
-	if dailyTask.Completed {
+	if dailyTask.IsCompleted {
 		return nil, errors.New("task already completed")
 	}
 
-	// Check if the task is for today (prevent completing old tasks)
-	today := time.Now().Truncate(24 * time.Hour)
-	taskDate := dailyTask.Date.Truncate(24 * time.Hour)
-	if !taskDate.Equal(today) {
-		return nil, errors.New("can only complete tasks for today")
+	// Mark as completed
+	updateReq := &models.UpdateDailyTaskRequest{
+		IsCompleted: &[]bool{true}[0], // Pointer to true
 	}
 
-	// Mark task as completed
-	dailyTask.Completed = true
-	err = s.taskRepo.UpdateDailyTask(dailyTask)
+	err = s.taskRepo.UpdateDailyTask(dailyTaskID, updateReq)
 	if err != nil {
 		return nil, err
 	}
 
 	// Award points to user
-	err = s.userService.AddPointsToUser(dailyTask.UserID, dailyTask.Task.Points)
+	err = s.awardPointsToUser(userID, dailyTask.Points)
 	if err != nil {
-		// If adding points fails, we should rollback the task completion
-		dailyTask.Completed = false
-		s.taskRepo.UpdateDailyTask(dailyTask)
-		return nil, errors.New("failed to award points to user")
+		// Log the error but don't fail the task completion
+		// In production, you might want to implement a retry mechanism
+		return dailyTask, err
 	}
 
-	return dailyTask, nil
+	// Get updated task
+	updatedTask, err := s.taskRepo.GetDailyTaskByID(dailyTaskID)
+	if err != nil {
+		return dailyTask, nil // Return original if we can't get updated
+	}
+
+	return updatedTask, nil
+}
+
+// GetUserDailyTasks returns daily tasks for a specific user
+func (s *TaskService) GetUserDailyTasks(userID uint) ([]models.DailyTask, error) {
+	// Verify user exists
+	_, err := s.userRepo.GetByID(userID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, errors.New("user not found")
+		}
+		return nil, err
+	}
+
+	return s.taskRepo.GetDailyTasksByUserID(userID)
+}
+
+// GetTaskByID returns a specific task (public endpoint)
+func (s *TaskService) GetTaskByID(taskID uint) (*models.Task, error) {
+	task, err := s.taskRepo.GetByID(taskID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, errors.New("task not found")
+		}
+		return nil, err
+	}
+	return task, nil
+}
+
+// Private helper methods
+
+// awardPointsToUser awards points to a user and updates their level
+func (s *TaskService) awardPointsToUser(userID uint, points int) error {
+	user, err := s.userRepo.GetByID(userID)
+	if err != nil {
+		return err
+	}
+
+	newPoints := user.Points + points
+	newLevel := s.calculateLevelFromPoints(newPoints)
+	character := s.getCharacterForLevel(newLevel)
+
+	updateReq := &models.UpdateUserRequest{
+		Points:    &newPoints,
+		Level:     &newLevel,
+		Character: &character,
+	}
+
+	return s.userRepo.Update(userID, updateReq)
+}
+
+// calculateLevelFromPoints calculates user level based on total points
+func (s *TaskService) calculateLevelFromPoints(points int) int {
+	switch {
+	case points < 100:
+		return 1
+	case points < 300:
+		return 2
+	case points < 600:
+		return 3
+	case points < 1000:
+		return 4
+	default:
+		return 5
+	}
+}
+
+// getCharacterForLevel returns the character name for a given level
+func (s *TaskService) getCharacterForLevel(level int) string {
+	characters := map[int]string{
+		1: "Rookie Hero",
+		2: "Bronze Warrior",
+		3: "Silver Champion",
+		4: "Gold Legend",
+		5: "Platinum Master",
+	}
+
+	if character, exists := characters[level]; exists {
+		return character
+	}
+	return "Rookie Hero" // Default fallback
 } 

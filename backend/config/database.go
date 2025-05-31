@@ -14,8 +14,8 @@ import (
 
 var DB *gorm.DB
 
-// InitDatabase initializes the database connection using GORM
-func InitDatabase() {
+// InitDB initializes the database connection and returns the instance
+func InitDB() (*gorm.DB, error) {
 	// Database configuration from environment variables
 	dbHost := getEnv("DB_HOST", "localhost")
 	dbPort := getEnv("DB_PORT", "5432")
@@ -49,23 +49,33 @@ func InitDatabase() {
 	}
 
 	if err != nil {
-		log.Fatal("Failed to connect to database:", err)
+		return nil, fmt.Errorf("failed to connect to database: %w", err)
 	}
 
 	log.Println("Successfully connected to database with GORM")
 
 	// Auto-migrate the schema
-	err = AutoMigrate()
+	err = AutoMigrate(DB)
 	if err != nil {
-		log.Fatal("Failed to migrate database:", err)
+		return nil, fmt.Errorf("failed to migrate database: %w", err)
 	}
 
 	log.Println("Database migration completed")
+	return DB, nil
+}
+
+// InitDatabase initializes the database connection using GORM (legacy function)
+func InitDatabase() {
+	db, err := InitDB()
+	if err != nil {
+		log.Fatal(err)
+	}
+	DB = db
 }
 
 // AutoMigrate migrates all models
-func AutoMigrate() error {
-	return DB.AutoMigrate(
+func AutoMigrate(db *gorm.DB) error {
+	return db.AutoMigrate(
 		&models.User{},
 		&models.Task{},
 		&models.DailyTask{},

@@ -6,99 +6,189 @@ import (
 
 	"fithero-backend/config"
 	"fithero-backend/controllers"
+	"fithero-backend/middleware"
 	"fithero-backend/repositories"
 	"fithero-backend/services"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"github.com/joho/godotenv"
 )
 
 func main() {
+	// Load environment variables from .env file
+	if err := godotenv.Load(); err != nil {
+		log.Printf("Warning: Could not load .env file: %v", err)
+	}
+
 	// Initialize database
-	config.InitDatabase()
+	db, err := config.InitDB()
+	if err != nil {
+		log.Fatal("Failed to connect to database:", err)
+	}
+
+	// Initialize authentication configuration
+	authConfig := config.NewAuthConfig()
 
 	// Initialize repositories
-	userRepo := repositories.NewUserRepository(config.GetDB())
-	taskRepo := repositories.NewTaskRepository(config.GetDB())
-	achievementRepo := repositories.NewAchievementRepository(config.GetDB())
+	userRepo := repositories.NewUserRepository(db)
+	taskRepo := repositories.NewTaskRepository(db)
+	achievementRepo := repositories.NewAchievementRepository(db)
 
 	// Initialize services
-	userService := services.NewUserService(userRepo)
-	taskService := services.NewTaskService(taskRepo, userService)
-	achievementService := services.NewAchievementService(achievementRepo, userService)
+	authService := services.NewAuthService(userRepo, authConfig)
+	userService := services.NewUserService(userRepo, taskRepo, achievementRepo)
+	taskService := services.NewTaskService(taskRepo, userRepo, achievementRepo)
+	achievementService := services.NewAchievementService(achievementRepo, userRepo)
 
 	// Initialize controllers
+	authController := controllers.NewAuthController(authService, authConfig)
 	userController := controllers.NewUserController(userService)
 	taskController := controllers.NewTaskController(taskService)
 	achievementController := controllers.NewAchievementController(achievementService)
 
 	// Initialize Gin router
-	r := gin.Default()
+	router := gin.Default()
 
-	// CORS middleware
-	r.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"http://localhost:3000"},
-		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
-		ExposeHeaders:    []string{"Content-Length"},
-		AllowCredentials: true,
-		MaxAge:           12 * 60 * 60, // 12 hours
-	}))
-
-	// API routes
-	api := r.Group("/api")
-	{
-		// User routes
-		users := api.Group("/users")
-		{
-			users.POST("", userController.CreateUser)
-			users.GET("/:id", userController.GetUser)
-			users.PUT("/:id", userController.UpdateUser)
-			users.DELETE("/:id", userController.DeleteUser)
-		}
-
-		// Task routes
-		tasks := api.Group("/tasks")
-		{
-			tasks.GET("", taskController.GetTasks)
-			tasks.GET("/daily/:user_id", taskController.GetDailyTasks)
-			tasks.POST("/daily", taskController.GenerateDailyTasks)
-			tasks.PUT("/daily/:id/complete", taskController.CompleteTask)
-		}
-
-		// Achievement routes
-		achievements := api.Group("/achievements")
-		{
-			achievements.GET("", achievementController.GetAchievements)
-			achievements.GET("/user/:user_id", achievementController.GetUserAchievements)
-			achievements.POST("/unlock", achievementController.UnlockAchievement)
-		}
-
-		// Leaderboard route
-		api.GET("/leaderboard", userController.GetLeaderboard)
+	// Configure CORS
+	corsConfig := cors.DefaultConfig()
+	corsConfig.AllowOrigins = []string{
+		"http://localhost:3000",
+		"http://127.0.0.1:3000",
 	}
+	corsConfig.AllowCredentials = true
+	corsConfig.AllowHeaders = []string{
+		"Origin",
+		"Content-Type",
+		"Accept",
+		"Authorization",
+		"X-Requested-With",
+	}
+	corsConfig.AllowMethods = []string{
+		"GET",
+		"POST",
+		"PUT",
+		"DELETE",
+		"OPTIONS",
+	}
+	router.Use(cors.New(corsConfig))
 
 	// Health check endpoint
-	r.GET("/health", func(c *gin.Context) {
+	router.GET("/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{
 			"status":  "healthy",
 			"service": "fithero-backend",
 		})
 	})
 
-	port := getEnv("PORT", "8080")
-	log.Printf("🚀 Server starting on port %s", port)
-	log.Printf("📊 Database connected with GORM")
-	log.Printf("🔒 Using ORM for SQL injection prevention")
-	log.Printf("✅ Layered architecture: Controller -> Service -> Repository")
-	
-	r.Run(":" + port)
-}
+	// API routes
+	api := router.Group("/api")
+	{
+		// Authentication routes (public)
+		auth := api.Group("/auth")
+		{
+			auth.GET("/google", authController.GoogleLogin)
+			auth.GET("/google/callback", authController.GoogleCallback)
+			auth.POST("/logout", authController.Logout)
+			auth.GET("/check", middleware.OptionalAuthMiddleware(authService), authController.CheckAuth)
+		}
 
-// getEnv gets environment variable with fallback
-func getEnv(key, defaultValue string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
+		// Protected routes requiring authentication
+		protected := api.Group("/")
+		protected.Use(middleware.AuthMiddleware(authService))
+		{
+			// User profile routes
+			protected.GET("/me", authController.Me)
+			protected.POST("/auth/refresh", authController.RefreshToken)
+			protected.GET("/profile", userController.GetCurrentUserProfile)
+			protected.PUT("/profile", func(c *gin.Context) {
+				// Get current user ID and forward to update method
+				userID, exists := middleware.GetCurrentUserID(c)
+				if !exists {
+					c.JSON(401, gin.H{"error": "Authentication required"})
+					return
+				}
+				c.Param("id")
+				c.Set("id", userID)
+				userController.UpdateUser(c)
+			})
+
+			// User-specific routes with ownership verification
+			users := protected.Group("/users")
+			{
+				users.GET("/:id", userController.GetUserByID)
+				users.PUT("/:id", userController.UpdateUser)
+				users.DELETE("/:id", userController.DeleteUser)
+				users.GET("/tasks", userController.GetUserTasks)
+				users.GET("/achievements", userController.GetUserAchievements)
+			}
+
+			// Task routes
+			tasks := protected.Group("/tasks")
+			{
+				tasks.GET("/daily", func(c *gin.Context) {
+					userID, _ := middleware.GetCurrentUserID(c)
+					dailyTasks, err := taskService.GetUserDailyTasks(userID)
+					if err != nil {
+						c.JSON(500, gin.H{"error": err.Error()})
+						return
+					}
+					c.JSON(200, gin.H{"tasks": dailyTasks})
+				})
+				tasks.POST("/daily/generate", func(c *gin.Context) {
+					userID, _ := middleware.GetCurrentUserID(c)
+					dailyTasks, err := taskService.GenerateDailyTasks(userID)
+					if err != nil {
+						c.JSON(500, gin.H{"error": err.Error()})
+						return
+					}
+					c.JSON(200, gin.H{"tasks": dailyTasks})
+				})
+				tasks.POST("/daily/:id/complete", func(c *gin.Context) {
+					taskController.CompleteTask(c)
+				})
+			}
+
+			// Achievement routes
+			achievements := protected.Group("/achievements")
+			{
+				achievements.GET("/", achievementController.GetAllAchievements)
+				achievements.POST("/:id/unlock", achievementController.UnlockAchievement)
+				achievements.GET("/user", func(c *gin.Context) {
+					userID, _ := middleware.GetCurrentUserID(c)
+					userAchievements, err := achievementService.GetUserAchievements(userID)
+					if err != nil {
+						c.JSON(500, gin.H{"error": err.Error()})
+						return
+					}
+					c.JSON(200, gin.H{"achievements": userAchievements})
+				})
+			}
+		}
+
+		// Public routes (no authentication required)
+		public := api.Group("/public")
+		{
+			public.GET("/tasks", taskController.GetAllTasks)
+			public.GET("/achievements", achievementController.GetAllAchievements)
+		}
+
+		// Admin routes (for user creation - could be expanded)
+		admin := api.Group("/admin")
+		admin.Use(middleware.AuthMiddleware(authService))
+		{
+			admin.POST("/users", userController.CreateUser)
+		}
 	}
-	return defaultValue
+
+	// Set port from environment or default to 8080
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+
+	log.Printf("Starting server on port %s", port)
+	if err := router.Run(":" + port); err != nil {
+		log.Fatal("Failed to start server:", err)
+	}
 } 

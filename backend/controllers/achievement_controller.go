@@ -3,27 +3,27 @@ package controllers
 import (
 	"net/http"
 	"strconv"
-	"fithero-backend/models"
 	"fithero-backend/services"
+	"fithero-backend/middleware"
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
 )
 
 type AchievementController struct {
-	achievementService services.AchievementService
+	achievementService *services.AchievementService
 	validator         *validator.Validate
 }
 
 // NewAchievementController creates a new achievement controller
-func NewAchievementController(achievementService services.AchievementService) *AchievementController {
+func NewAchievementController(achievementService *services.AchievementService) *AchievementController {
 	return &AchievementController{
 		achievementService: achievementService,
 		validator:         validator.New(),
 	}
 }
 
-// GetAchievements handles GET /api/achievements
-func (ac *AchievementController) GetAchievements(c *gin.Context) {
+// GetAllAchievements handles GET /api/achievements and GET /api/public/achievements
+func (ac *AchievementController) GetAllAchievements(c *gin.Context) {
 	achievements, err := ac.achievementService.GetAllAchievements()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve achievements"})
@@ -33,16 +33,16 @@ func (ac *AchievementController) GetAchievements(c *gin.Context) {
 	c.JSON(http.StatusOK, achievements)
 }
 
-// GetUserAchievements handles GET /api/achievements/user/:user_id
+// GetUserAchievements handles GET /api/achievements/user (for current user)
 func (ac *AchievementController) GetUserAchievements(c *gin.Context) {
-	userIDParam := c.Param("user_id")
-	userID, err := strconv.ParseUint(userIDParam, 10, 32)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user ID"})
+	// Get current user ID from middleware
+	userID, exists := middleware.GetCurrentUserID(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Authentication required"})
 		return
 	}
 
-	userAchievements, err := ac.achievementService.GetUserAchievements(uint(userID))
+	userAchievements, err := ac.achievementService.GetUserAchievements(userID)
 	if err != nil {
 		if err.Error() == "user not found" {
 			c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
@@ -55,21 +55,24 @@ func (ac *AchievementController) GetUserAchievements(c *gin.Context) {
 	c.JSON(http.StatusOK, userAchievements)
 }
 
-// UnlockAchievement handles POST /api/achievements/unlock
+// UnlockAchievement handles POST /api/achievements/:id/unlock
 func (ac *AchievementController) UnlockAchievement(c *gin.Context) {
-	var req models.UnlockAchievementRequest
-	
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format", "details": err.Error()})
+	// Get current user ID from middleware
+	userID, exists := middleware.GetCurrentUserID(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Authentication required"})
 		return
 	}
 
-	if err := ac.validator.Struct(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Validation failed", "details": err.Error()})
+	// Get achievement ID from URL parameter
+	achievementIDParam := c.Param("id")
+	achievementID, err := strconv.ParseUint(achievementIDParam, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid achievement ID"})
 		return
 	}
 
-	userAchievement, err := ac.achievementService.UnlockAchievement(req.UserID, req.AchievementID)
+	userAchievement, err := ac.achievementService.UnlockAchievement(userID, uint(achievementID))
 	if err != nil {
 		switch err.Error() {
 		case "user not found":

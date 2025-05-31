@@ -6,7 +6,44 @@ export interface User {
   points: number;
   character: string;
   job_title: string;
+  google_id?: string;
+  first_name?: string;
+  last_name?: string;
+  picture?: string;
+  is_active: boolean;
+  last_login_at?: string;
   created_at: string;
+  updated_at: string;
+}
+
+export interface AuthUser {
+  id: number;
+  username: string;
+  email: string;
+  first_name?: string;
+  last_name?: string;
+  picture?: string;
+  level: number;
+  points: number;
+  character: string;
+  job_title: string;
+  is_active: boolean;
+  last_login_at?: string;
+}
+
+export interface AuthResponse {
+  user: AuthUser;
+  token: string;
+  expires_at: string;
+}
+
+export interface AuthContextType {
+  user: AuthUser | null;
+  isAuthenticated: boolean;
+  isLoading: boolean;
+  login: () => Promise<void>;
+  logout: () => void;
+  checkAuth: () => Promise<void>;
 }
 
 export interface Task {
@@ -23,8 +60,10 @@ export interface DailyTask {
   user_id: number;
   task_id: number;
   task: Task;
-  completed: boolean;
-  date: string;
+  is_completed: boolean;
+  points: number;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface Achievement {

@@ -1,37 +1,30 @@
-import React, { useState } from 'react';
+import React from 'react';
 import {
   Container,
   Typography,
   Button,
   Card,
   CardContent,
-  TextField,
   Box,
   Grid,
   Avatar,
+  Chip,
 } from '@mui/material';
 import { motion } from 'framer-motion';
-import { FitnessCenter, TrendingUp, Group, EmojiEvents } from '@mui/icons-material';
-import { userAPI } from '../api/client';
+import { 
+  FitnessCenter, 
+  TrendingUp, 
+  Group, 
+  EmojiEvents, 
+  Dashboard as DashboardIcon,
+  Login as LoginIcon 
+} from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
 
 const Home: React.FC = () => {
-  const [username, setUsername] = useState('');
-  const [email, setEmail] = useState('');
-  const [isRegistering, setIsRegistering] = useState(false);
   const navigate = useNavigate();
-
-  const handleRegister = async () => {
-    if (!username || !email) return;
-    
-    try {
-      const user = await userAPI.create({ username, email });
-      localStorage.setItem('userId', user.id.toString());
-      navigate('/dashboard');
-    } catch (error) {
-      console.error('Registration failed:', error);
-    }
-  };
+  const { user, isAuthenticated, login, isLoading } = useAuth();
 
   const features = [
     {
@@ -56,6 +49,100 @@ const Home: React.FC = () => {
     },
   ];
 
+  const AuthenticatedWelcome = () => (
+    <motion.div
+      initial={{ opacity: 0, scale: 0.9 }}
+      animate={{ opacity: 1, scale: 1 }}
+      transition={{ duration: 0.5, delay: 0.2 }}
+    >
+      <Card sx={{ maxWidth: 500, mx: 'auto', mb: 6 }}>
+        <CardContent sx={{ p: 4 }}>
+          <Box textAlign="center" mb={3}>
+            <Avatar 
+              src={user?.picture} 
+              sx={{ width: 80, height: 80, mx: 'auto', mb: 2 }}
+            >
+              {(user?.first_name?.[0] || user?.username?.[0] || 'H').toUpperCase()}
+            </Avatar>
+            <Typography variant="h5" gutterBottom>
+              Welcome back, {user?.first_name || user?.username}! 🎉
+            </Typography>
+            <Typography variant="body1" color="text.secondary" paragraph>
+              Ready to continue your hero journey?
+            </Typography>
+            
+            <Box sx={{ display: 'flex', justifyContent: 'center', gap: 1, mb: 3 }}>
+              <Chip
+                label={`Level ${user?.level || 1}`}
+                color="primary"
+                sx={{ fontWeight: 'bold' }}
+              />
+              <Chip
+                label={user?.character || 'Rookie Hero'}
+                color="secondary"
+              />
+              <Chip
+                label={`${user?.points || 0} Points`}
+                variant="outlined"
+              />
+            </Box>
+          </Box>
+          
+          <Button
+            variant="contained"
+            size="large"
+            startIcon={<DashboardIcon />}
+            onClick={() => navigate('/dashboard')}
+            fullWidth
+            sx={{ py: 1.5 }}
+          >
+            Go to Dashboard
+          </Button>
+        </CardContent>
+      </Card>
+    </motion.div>
+  );
+
+  const UnauthenticatedWelcome = () => (
+    <motion.div
+      initial={{ opacity: 0, scale: 0.9 }}
+      animate={{ opacity: 1, scale: 1 }}
+      transition={{ duration: 0.5, delay: 0.2 }}
+    >
+      <Card sx={{ maxWidth: 400, mx: 'auto', mb: 6 }}>
+        <CardContent sx={{ p: 4 }}>
+          <Box textAlign="center" mb={3}>
+            <Avatar sx={{ width: 80, height: 80, mx: 'auto', mb: 2, bgcolor: 'primary.main' }}>
+              🦸‍♂️
+            </Avatar>
+            <Typography variant="h6" gutterBottom>
+              Start Your Hero Journey
+            </Typography>
+            <Typography variant="body2" color="text.secondary" paragraph>
+              Sign in with Google to begin your fitness adventure and track your progress!
+            </Typography>
+          </Box>
+          
+          <Button
+            variant="contained"
+            size="large"
+            startIcon={<LoginIcon />}
+            onClick={login}
+            disabled={isLoading}
+            fullWidth
+            sx={{ py: 1.5 }}
+          >
+            {isLoading ? 'Loading...' : 'Sign In with Google 🚀'}
+          </Button>
+          
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 2, textAlign: 'center' }}>
+            Secure authentication powered by Google OAuth
+          </Typography>
+        </CardContent>
+      </Card>
+    </motion.div>
+  );
+
   return (
     <Container maxWidth="lg" sx={{ py: 4 }}>
       <motion.div
@@ -72,63 +159,18 @@ const Home: React.FC = () => {
             WebkitTextFillColor: 'transparent',
             mb: 2
           }}>
-            Welcome to FitHero! 🦸‍♂️
+            {isAuthenticated ? `Welcome back to FitHero! 🦸‍♂️` : 'Welcome to FitHero! 🦸‍♂️'}
           </Typography>
           <Typography variant="h5" color="text.secondary" paragraph sx={{ maxWidth: '600px', mx: 'auto' }}>
-            Transform your fitness journey into an epic adventure! Complete daily challenges, 
-            level up your character, and become the superhero of your own story.
+            {isAuthenticated 
+              ? 'Your fitness adventure continues! Check your dashboard for today\'s challenges.'
+              : 'Transform your fitness journey into an epic adventure! Complete daily challenges, level up your character, and become the superhero of your own story.'
+            }
           </Typography>
         </Box>
 
-        {/* Registration Card */}
-        <motion.div
-          initial={{ opacity: 0, scale: 0.9 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ duration: 0.5, delay: 0.2 }}
-        >
-          <Card sx={{ maxWidth: 400, mx: 'auto', mb: 6 }}>
-            <CardContent sx={{ p: 4 }}>
-              <Box textAlign="center" mb={3}>
-                <Avatar sx={{ width: 80, height: 80, mx: 'auto', mb: 2, bgcolor: 'primary.main' }}>
-                  🦸‍♂️
-                </Avatar>
-                <Typography variant="h6" gutterBottom>
-                  Start Your Hero Journey
-                </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  Create your account to begin your fitness adventure
-                </Typography>
-              </Box>
-              
-              <Box component="form" sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                <TextField
-                  fullWidth
-                  label="Hero Name (Username)"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  placeholder="Enter your superhero name"
-                />
-                <TextField
-                  fullWidth
-                  label="Email"
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="your.email@example.com"
-                />
-                <Button
-                  variant="contained"
-                  size="large"
-                  onClick={handleRegister}
-                  disabled={!username || !email || isRegistering}
-                  sx={{ mt: 2, py: 1.5 }}
-                >
-                  {isRegistering ? 'Creating Hero...' : 'Begin Adventure! 🚀'}
-                </Button>
-              </Box>
-            </CardContent>
-          </Card>
-        </motion.div>
+        {/* Authentication-based Welcome Section */}
+        {isAuthenticated ? <AuthenticatedWelcome /> : <UnauthenticatedWelcome />}
 
         {/* Features Grid */}
         <Grid container spacing={4} sx={{ mt: 4 }}>
@@ -158,14 +200,25 @@ const Home: React.FC = () => {
         </Grid>
 
         {/* Call to Action */}
-        <Box textAlign="center" mt={6}>
-          <Typography variant="h6" gutterBottom>
-            Ready to transform your life? 💪
-          </Typography>
-          <Typography variant="body1" color="text.secondary" paragraph>
-            Join thousands of heroes on their fitness journey. It's time to level up!
-          </Typography>
-        </Box>
+        {!isAuthenticated && (
+          <Box textAlign="center" mt={6}>
+            <Typography variant="h6" gutterBottom>
+              Ready to transform your life? 💪
+            </Typography>
+            <Typography variant="body1" color="text.secondary" paragraph>
+              Join thousands of heroes on their fitness journey. It's time to level up!
+            </Typography>
+            <Button
+              variant="outlined"
+              size="large"
+              startIcon={<LoginIcon />}
+              onClick={login}
+              sx={{ mt: 2, px: 4, py: 1.5 }}
+            >
+              Get Started Today
+            </Button>
+          </Box>
+        )}
       </motion.div>
     </Container>
   );

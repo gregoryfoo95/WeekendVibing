@@ -8,35 +8,32 @@ import (
 	"gorm.io/gorm"
 )
 
-type AchievementService interface {
-	GetAllAchievements() ([]models.Achievement, error)
-	GetUserAchievements(userID uint) ([]models.UserAchievement, error)
-	UnlockAchievement(userID, achievementID uint) (*models.UserAchievement, error)
-}
-
-type achievementService struct {
-	achievementRepo repositories.AchievementRepository
-	userService     UserService
+type AchievementService struct {
+	achievementRepo repositories.AchievementRepositoryInterface
+	userRepo        repositories.UserRepositoryInterface
 }
 
 // NewAchievementService creates a new achievement service
-func NewAchievementService(achievementRepo repositories.AchievementRepository, userService UserService) AchievementService {
-	return &achievementService{
+func NewAchievementService(achievementRepo repositories.AchievementRepositoryInterface, userRepo repositories.UserRepositoryInterface) *AchievementService {
+	return &AchievementService{
 		achievementRepo: achievementRepo,
-		userService:     userService,
+		userRepo:        userRepo,
 	}
 }
 
 // GetAllAchievements returns all available achievements
-func (s *achievementService) GetAllAchievements() ([]models.Achievement, error) {
-	return s.achievementRepo.GetAllAchievements()
+func (s *AchievementService) GetAllAchievements() ([]models.Achievement, error) {
+	return s.achievementRepo.GetAll()
 }
 
 // GetUserAchievements retrieves all achievements unlocked by a user
-func (s *achievementService) GetUserAchievements(userID uint) ([]models.UserAchievement, error) {
+func (s *AchievementService) GetUserAchievements(userID uint) ([]models.UserAchievement, error) {
 	// Validate user exists
-	_, err := s.userService.GetUserByID(userID)
+	_, err := s.userRepo.GetByID(userID)
 	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, errors.New("user not found")
+		}
 		return nil, err
 	}
 
@@ -44,15 +41,18 @@ func (s *achievementService) GetUserAchievements(userID uint) ([]models.UserAchi
 }
 
 // UnlockAchievement unlocks an achievement for a user with business logic validation
-func (s *achievementService) UnlockAchievement(userID, achievementID uint) (*models.UserAchievement, error) {
+func (s *AchievementService) UnlockAchievement(userID, achievementID uint) (*models.UserAchievement, error) {
 	// Validate user exists
-	user, err := s.userService.GetUserByID(userID)
+	user, err := s.userRepo.GetByID(userID)
 	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, errors.New("user not found")
+		}
 		return nil, err
 	}
 
 	// Validate achievement exists
-	achievement, err := s.achievementRepo.GetAchievementByID(achievementID)
+	achievement, err := s.achievementRepo.GetByID(achievementID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errors.New("achievement not found")
@@ -75,9 +75,9 @@ func (s *achievementService) UnlockAchievement(userID, achievementID uint) (*mod
 	}
 
 	// Deduct points from user
-	user.Points -= achievement.PointsCost
-	_, err = s.userService.UpdateUser(userID, &models.UpdateUserRequest{
-		Points: &user.Points,
+	newPoints := user.Points - achievement.PointsCost
+	err = s.userRepo.Update(userID, &models.UpdateUserRequest{
+		Points: &newPoints,
 	})
 	if err != nil {
 		return nil, errors.New("failed to deduct points from user")
@@ -90,27 +90,24 @@ func (s *achievementService) UnlockAchievement(userID, achievementID uint) (*mod
 		UnlockedAt:    time.Now(),
 	}
 
-	err = s.achievementRepo.CreateUserAchievement(userAchievement)
+	createdAchievement, err := s.achievementRepo.CreateUserAchievement(userAchievement)
 	if err != nil {
 		// Rollback points if achievement creation fails
-		user.Points += achievement.PointsCost
-		s.userService.UpdateUser(userID, &models.UpdateUserRequest{
-			Points: &user.Points,
+		rollbackPoints := user.Points
+		s.userRepo.Update(userID, &models.UpdateUserRequest{
+			Points: &rollbackPoints,
 		})
 		return nil, errors.New("failed to unlock achievement")
 	}
 
-	// Load the achievement relationship
-	userAchievement.Achievement = *achievement
-
 	// Update user job title or character if achievement affects them
 	s.updateUserBasedOnAchievement(userID, achievement)
 
-	return userAchievement, nil
+	return createdAchievement, nil
 }
 
 // updateUserBasedOnAchievement updates user character or job title based on achievement type
-func (s *achievementService) updateUserBasedOnAchievement(userID uint, achievement *models.Achievement) {
+func (s *AchievementService) updateUserBasedOnAchievement(userID uint, achievement *models.Achievement) {
 	updateReq := &models.UpdateUserRequest{}
 	
 	switch achievement.Type {
@@ -126,12 +123,12 @@ func (s *achievementService) updateUserBasedOnAchievement(userID uint, achieveme
 
 	// Only update if there are changes
 	if updateReq.Character != nil || updateReq.JobTitle != nil {
-		s.userService.UpdateUser(userID, updateReq)
+		s.userRepo.Update(userID, updateReq)
 	}
 }
 
 // mapAchievementToJobTitle maps achievement titles to job titles
-func (s *achievementService) mapAchievementToJobTitle(achievementTitle string) string {
+func (s *AchievementService) mapAchievementToJobTitle(achievementTitle string) string {
 	jobTitleMap := map[string]string{
 		"Personal Trainer":   "Personal Trainer",
 		"Fitness Coach":      "Fitness Coach", 

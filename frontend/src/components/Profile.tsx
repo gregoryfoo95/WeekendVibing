@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import {
   Container,
   Typography,
@@ -13,22 +13,17 @@ import {
 import { motion } from 'framer-motion';
 import { Person, Star, TrendingUp, EmojiEvents } from '@mui/icons-material';
 import { useQuery } from 'react-query';
-import { userAPI, achievementAPI } from '../api/client';
-import { User, UserAchievement } from '../types';
+import { achievementAPI } from '../api/client';
+import { UserAchievement } from '../types';
+import { useAuth } from '../contexts/AuthContext';
 
 const Profile: React.FC = () => {
-  const [userId] = useState(parseInt(localStorage.getItem('userId') || '1'));
-
-  const { data: user, isLoading } = useQuery<User>(
-    ['user', userId],
-    () => userAPI.getById(userId),
-    { enabled: !!userId }
-  );
+  const { user } = useAuth();
 
   const { data: userAchievements } = useQuery<UserAchievement[]>(
-    ['userAchievements', userId],
-    () => achievementAPI.getUserAchievements(userId),
-    { enabled: !!userId }
+    ['userAchievements'],
+    () => achievementAPI.getUserAchievements(),
+    { enabled: !!user }
   );
 
   const getCharacterLevel = (points: number) => {
@@ -39,11 +34,11 @@ const Profile: React.FC = () => {
     return 1;
   };
 
-  if (isLoading || !user) {
+  if (!user) {
     return (
       <Container maxWidth="md" sx={{ py: 4 }}>
         <Box display="flex" justifyContent="center" alignItems="center" minHeight="60vh">
-          <Typography variant="h6">Loading profile... 👤</Typography>
+          <Typography variant="h6">Authentication required... 👤</Typography>
         </Box>
       </Container>
     );
@@ -69,11 +64,17 @@ const Profile: React.FC = () => {
         {/* Profile Card */}
         <Card sx={{ mb: 4, background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', color: 'white' }}>
           <CardContent sx={{ textAlign: 'center', p: 4 }}>
-            <Avatar sx={{ width: 120, height: 120, mx: 'auto', mb: 3, fontSize: '3rem' }}>
-              🦸‍♂️
+            <Avatar 
+              src={user.picture}
+              sx={{ width: 120, height: 120, mx: 'auto', mb: 3, fontSize: '3rem' }}
+            >
+              {(user.first_name?.[0] || user.username?.[0] || '🦸').toUpperCase()}
             </Avatar>
             <Typography variant="h4" gutterBottom>
-              {user.username}
+              {user.first_name ? `${user.first_name} ${user.last_name || ''}`.trim() : user.username}
+            </Typography>
+            <Typography variant="body1" sx={{ mb: 2, opacity: 0.9 }}>
+              {user.email}
             </Typography>
             <Typography variant="h6" sx={{ mb: 2, opacity: 0.9 }}>
               {user.character}
@@ -154,6 +155,9 @@ const Profile: React.FC = () => {
                         </Typography>
                         <Typography variant="body2" color="text.secondary">
                           {userAchievement.achievement.description}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+                          Unlocked: {new Date(userAchievement.unlocked_at).toLocaleDateString()}
                         </Typography>
                       </CardContent>
                     </Card>

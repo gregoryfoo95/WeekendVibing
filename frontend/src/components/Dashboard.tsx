@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   Container,
   Typography,
@@ -23,34 +23,28 @@ import {
   EmojiEvents
 } from '@mui/icons-material';
 import { useQuery, useMutation, useQueryClient } from 'react-query';
-import { userAPI, taskAPI } from '../api/client';
-import { User, DailyTask } from '../types';
+import { taskAPI } from '../api/client';
+import { DailyTask } from '../types';
+import { useAuth } from '../contexts/AuthContext';
 
 const Dashboard: React.FC = () => {
-  const [userId] = useState(parseInt(localStorage.getItem('userId') || '1'));
+  const { user } = useAuth();
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' as 'success' | 'error' });
   const queryClient = useQueryClient();
 
-  // Fetch user data
-  const { data: user, isLoading: userLoading } = useQuery<User>(
-    ['user', userId],
-    () => userAPI.getById(userId),
-    { enabled: !!userId }
-  );
-
-  // Fetch daily tasks
+  // Fetch daily tasks for authenticated user
   const { data: dailyTasks, isLoading: tasksLoading } = useQuery<DailyTask[]>(
-    ['dailyTasks', userId],
-    () => taskAPI.getDailyTasks(userId),
-    { enabled: !!userId }
+    ['dailyTasks'],
+    () => taskAPI.getDailyTasks(),
+    { enabled: !!user }
   );
 
   // Generate daily tasks mutation
   const generateTasksMutation = useMutation(
-    () => taskAPI.generateDailyTasks({ user_id: userId }),
+    () => taskAPI.generateDailyTasks(),
     {
       onSuccess: () => {
-        queryClient.invalidateQueries(['dailyTasks', userId]);
+        queryClient.invalidateQueries(['dailyTasks']);
         setSnackbar({ open: true, message: 'New daily tasks generated! 🎯', severity: 'success' });
       },
       onError: () => {
@@ -64,8 +58,7 @@ const Dashboard: React.FC = () => {
     (taskId: number) => taskAPI.completeTask(taskId),
     {
       onSuccess: (data) => {
-        queryClient.invalidateQueries(['dailyTasks', userId]);
-        queryClient.invalidateQueries(['user', userId]);
+        queryClient.invalidateQueries(['dailyTasks']);
         setSnackbar({ 
           open: true, 
           message: `Great job! You earned ${data.points_earned} points! 🌟`, 
@@ -77,13 +70,6 @@ const Dashboard: React.FC = () => {
       }
     }
   );
-
-  // Auto-generate tasks if none exist
-  useEffect(() => {
-    if (dailyTasks && dailyTasks.length === 0) {
-      generateTasksMutation.mutate();
-    }
-  }, [dailyTasks]);
 
   const getDifficultyColor = (difficulty: string) => {
     switch (difficulty) {
@@ -117,7 +103,7 @@ const Dashboard: React.FC = () => {
     return levels[level] || 2000;
   };
 
-  if (userLoading || tasksLoading) {
+  if (tasksLoading) {
     return (
       <Container maxWidth="lg" sx={{ py: 4 }}>
         <Box display="flex" justifyContent="center" alignItems="center" minHeight="60vh">
@@ -130,12 +116,12 @@ const Dashboard: React.FC = () => {
   if (!user) {
     return (
       <Container maxWidth="lg" sx={{ py: 4 }}>
-        <Alert severity="error">User not found. Please register first.</Alert>
+        <Alert severity="error">Authentication required. Please sign in.</Alert>
       </Container>
     );
   }
 
-  const completedTasks = dailyTasks?.filter(task => task.completed).length || 0;
+  const completedTasks = dailyTasks?.filter(task => task.is_completed).length || 0;
   const totalTasks = dailyTasks?.length || 0;
   const progressPercentage = totalTasks > 0 ? (completedTasks / totalTasks) * 100 : 0;
   const currentLevel = getCharacterLevel(user.points);
@@ -152,7 +138,7 @@ const Dashboard: React.FC = () => {
         {/* Header */}
         <Box mb={4}>
           <Typography variant="h3" gutterBottom>
-            Welcome back, {user.username}! 🦸‍♂️
+            Welcome back, {user.first_name || user.username}! 🦸‍♂️
           </Typography>
           <Typography variant="h6" color="text.secondary">
             Ready for today's fitness adventure?
@@ -165,8 +151,11 @@ const Dashboard: React.FC = () => {
           <Grid item xs={12} md={4}>
             <Card sx={{ background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', color: 'white' }}>
               <CardContent sx={{ textAlign: 'center', p: 3 }}>
-                <Avatar sx={{ width: 80, height: 80, mx: 'auto', mb: 2, fontSize: '2rem' }}>
-                  🦸‍♂️
+                <Avatar 
+                  src={user.picture}
+                  sx={{ width: 80, height: 80, mx: 'auto', mb: 2, fontSize: '2rem' }}
+                >
+                  {(user.first_name?.[0] || user.username?.[0] || '🦸').toUpperCase()}
                 </Avatar>
                 <Typography variant="h6" gutterBottom>
                   {user.character}
@@ -269,12 +258,12 @@ const Dashboard: React.FC = () => {
                     <Card 
                       sx={{ 
                         height: '100%',
-                        opacity: dailyTask.completed ? 0.7 : 1,
-                        border: dailyTask.completed ? '2px solid #4CAF50' : 'none',
+                        opacity: dailyTask.is_completed ? 0.7 : 1,
+                        border: dailyTask.is_completed ? '2px solid #4CAF50' : 'none',
                         position: 'relative'
                       }}
                     >
-                      {dailyTask.completed && (
+                      {dailyTask.is_completed && (
                         <CheckCircle 
                           sx={{ 
                             position: 'absolute', 
@@ -317,17 +306,17 @@ const Dashboard: React.FC = () => {
                         <Button
                           fullWidth
                           variant="contained"
-                          disabled={dailyTask.completed || completeTaskMutation.isLoading}
+                          disabled={dailyTask.is_completed || completeTaskMutation.isLoading}
                           onClick={() => completeTaskMutation.mutate(dailyTask.id)}
-                          startIcon={dailyTask.completed ? <CheckCircle /> : <EmojiEvents />}
+                          startIcon={dailyTask.is_completed ? <CheckCircle /> : <EmojiEvents />}
                           sx={{
-                            backgroundColor: dailyTask.completed ? '#4CAF50' : undefined,
+                            backgroundColor: dailyTask.is_completed ? '#4CAF50' : undefined,
                             '&:hover': {
-                              backgroundColor: dailyTask.completed ? '#4CAF50' : undefined,
+                              backgroundColor: dailyTask.is_completed ? '#4CAF50' : undefined,
                             }
                           }}
                         >
-                          {dailyTask.completed ? 'Completed! 🎉' : 'Complete Task'}
+                          {dailyTask.is_completed ? 'Completed! 🎉' : 'Complete Task'}
                         </Button>
                       </CardContent>
                     </Card>

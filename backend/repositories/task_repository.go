@@ -1,42 +1,40 @@
 package repositories
 
 import (
-	"time"
 	"fithero-backend/models"
 	"gorm.io/gorm"
 )
 
-type TaskRepository interface {
-	GetAllTasks() ([]models.Task, error)
-	GetTaskByID(id uint) (*models.Task, error)
-	GetRandomTasks(count int) ([]models.Task, error)
+type TaskRepositoryInterface interface {
+	GetAll() ([]models.Task, error)
+	GetByID(id uint) (*models.Task, error)
+	GetTasksByLevel(level int) ([]models.Task, error)
 	
 	// Daily Tasks
-	CreateDailyTask(dailyTask *models.DailyTask) error
-	GetDailyTasksByUserAndDate(userID uint, date time.Time) ([]models.DailyTask, error)
+	CreateDailyTask(dailyTask *models.DailyTask) (*models.DailyTask, error)
+	GetDailyTasksByUserID(userID uint) ([]models.DailyTask, error)
 	GetDailyTaskByID(id uint) (*models.DailyTask, error)
-	UpdateDailyTask(dailyTask *models.DailyTask) error
-	DeleteDailyTasksByUserAndDate(userID uint, date time.Time) error
+	UpdateDailyTask(id uint, updates *models.UpdateDailyTaskRequest) error
 }
 
-type taskRepository struct {
+type TaskRepository struct {
 	db *gorm.DB
 }
 
 // NewTaskRepository creates a new task repository
-func NewTaskRepository(db *gorm.DB) TaskRepository {
-	return &taskRepository{db: db}
+func NewTaskRepository(db *gorm.DB) TaskRepositoryInterface {
+	return &TaskRepository{db: db}
 }
 
-// GetAllTasks retrieves all tasks
-func (r *taskRepository) GetAllTasks() ([]models.Task, error) {
+// GetAll retrieves all tasks
+func (r *TaskRepository) GetAll() ([]models.Task, error) {
 	var tasks []models.Task
 	err := r.db.Find(&tasks).Error
 	return tasks, err
 }
 
-// GetTaskByID retrieves a task by ID
-func (r *taskRepository) GetTaskByID(id uint) (*models.Task, error) {
+// GetByID retrieves a task by ID
+func (r *TaskRepository) GetByID(id uint) (*models.Task, error) {
 	var task models.Task
 	err := r.db.First(&task, id).Error
 	if err != nil {
@@ -45,32 +43,37 @@ func (r *taskRepository) GetTaskByID(id uint) (*models.Task, error) {
 	return &task, nil
 }
 
-// GetRandomTasks retrieves random tasks
-func (r *taskRepository) GetRandomTasks(count int) ([]models.Task, error) {
+// GetTasksByLevel retrieves tasks suitable for a specific user level
+func (r *TaskRepository) GetTasksByLevel(level int) ([]models.Task, error) {
 	var tasks []models.Task
-	err := r.db.Order("RANDOM()").Limit(count).Find(&tasks).Error
+	// Get tasks where required level is less than or equal to user level
+	err := r.db.Where("level <= ?", level).Find(&tasks).Error
 	return tasks, err
 }
 
 // CreateDailyTask creates a new daily task
-func (r *taskRepository) CreateDailyTask(dailyTask *models.DailyTask) error {
-	return r.db.Create(dailyTask).Error
+func (r *TaskRepository) CreateDailyTask(dailyTask *models.DailyTask) (*models.DailyTask, error) {
+	if err := r.db.Create(dailyTask).Error; err != nil {
+		return nil, err
+	}
+	// Load the task relationship
+	if err := r.db.Preload("Task").First(dailyTask, dailyTask.ID).Error; err != nil {
+		return nil, err
+	}
+	return dailyTask, nil
 }
 
-// GetDailyTasksByUserAndDate retrieves daily tasks for a user on a specific date
-func (r *taskRepository) GetDailyTasksByUserAndDate(userID uint, date time.Time) ([]models.DailyTask, error) {
+// GetDailyTasksByUserID retrieves daily tasks for a user
+func (r *TaskRepository) GetDailyTasksByUserID(userID uint) ([]models.DailyTask, error) {
 	var dailyTasks []models.DailyTask
-	startOfDay := time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, date.Location())
-	endOfDay := startOfDay.Add(24 * time.Hour)
-	
 	err := r.db.Preload("Task").
-		Where("user_id = ? AND date >= ? AND date < ?", userID, startOfDay, endOfDay).
+		Where("user_id = ?", userID).
 		Find(&dailyTasks).Error
 	return dailyTasks, err
 }
 
 // GetDailyTaskByID retrieves a daily task by ID
-func (r *taskRepository) GetDailyTaskByID(id uint) (*models.DailyTask, error) {
+func (r *TaskRepository) GetDailyTaskByID(id uint) (*models.DailyTask, error) {
 	var dailyTask models.DailyTask
 	err := r.db.Preload("Task").First(&dailyTask, id).Error
 	if err != nil {
@@ -80,15 +83,21 @@ func (r *taskRepository) GetDailyTaskByID(id uint) (*models.DailyTask, error) {
 }
 
 // UpdateDailyTask updates a daily task
-func (r *taskRepository) UpdateDailyTask(dailyTask *models.DailyTask) error {
-	return r.db.Save(dailyTask).Error
-}
+func (r *TaskRepository) UpdateDailyTask(id uint, updates *models.UpdateDailyTaskRequest) error {
+	dailyTask := &models.DailyTask{}
+	if err := r.db.First(dailyTask, id).Error; err != nil {
+		return err
+	}
 
-// DeleteDailyTasksByUserAndDate deletes daily tasks for a user on a specific date
-func (r *taskRepository) DeleteDailyTasksByUserAndDate(userID uint, date time.Time) error {
-	startOfDay := time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, date.Location())
-	endOfDay := startOfDay.Add(24 * time.Hour)
+	updateData := make(map[string]interface{})
 	
-	return r.db.Where("user_id = ? AND date >= ? AND date < ?", userID, startOfDay, endOfDay).
-		Delete(&models.DailyTask{}).Error
+	if updates.IsCompleted != nil {
+		updateData["is_completed"] = *updates.IsCompleted
+	}
+
+	if len(updateData) > 0 {
+		return r.db.Model(dailyTask).Updates(updateData).Error
+	}
+	
+	return nil
 } 

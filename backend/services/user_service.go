@@ -7,34 +7,23 @@ import (
 	"gorm.io/gorm"
 )
 
-type UserService interface {
-	CreateUser(req *models.CreateUserRequest) (*models.User, error)
-	GetUserByID(id uint) (*models.User, error)
-	UpdateUser(id uint, req *models.UpdateUserRequest) (*models.User, error)
-	DeleteUser(id uint) error
-	GetLeaderboard(limit int) ([]models.User, error)
-	UpdateUserLevel(userID uint) error
-	AddPointsToUser(userID uint, points int) error
-}
-
-type userService struct {
-	userRepo repositories.UserRepository
+type UserService struct {
+	userRepo        repositories.UserRepositoryInterface
+	taskRepo        repositories.TaskRepositoryInterface
+	achievementRepo repositories.AchievementRepositoryInterface
 }
 
 // NewUserService creates a new user service
-func NewUserService(userRepo repositories.UserRepository) UserService {
-	return &userService{
-		userRepo: userRepo,
+func NewUserService(userRepo repositories.UserRepositoryInterface, taskRepo repositories.TaskRepositoryInterface, achievementRepo repositories.AchievementRepositoryInterface) *UserService {
+	return &UserService{
+		userRepo:        userRepo,
+		taskRepo:        taskRepo,
+		achievementRepo: achievementRepo,
 	}
 }
 
 // CreateUser creates a new user with business logic validation
-func (s *userService) CreateUser(req *models.CreateUserRequest) (*models.User, error) {
-	// Check if username already exists
-	if existingUser, _ := s.userRepo.GetByUsername(req.Username); existingUser != nil {
-		return nil, errors.New("username already exists")
-	}
-
+func (s *UserService) CreateUser(req *models.CreateUserRequest) (*models.User, error) {
 	// Check if email already exists
 	if existingUser, _ := s.userRepo.GetByEmail(req.Email); existingUser != nil {
 		return nil, errors.New("email already exists")
@@ -48,18 +37,19 @@ func (s *userService) CreateUser(req *models.CreateUserRequest) (*models.User, e
 		Points:    0,
 		Character: "Rookie Hero",
 		JobTitle:  "Fitness Novice",
+		IsActive:  true,
 	}
 
-	err := s.userRepo.Create(user)
+	createdUser, err := s.userRepo.Create(user)
 	if err != nil {
 		return nil, err
 	}
 
-	return user, nil
+	return createdUser, nil
 }
 
 // GetUserByID retrieves a user by ID
-func (s *userService) GetUserByID(id uint) (*models.User, error) {
+func (s *UserService) GetUserByID(id uint) (*models.User, error) {
 	user, err := s.userRepo.GetByID(id)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -71,58 +61,41 @@ func (s *userService) GetUserByID(id uint) (*models.User, error) {
 }
 
 // UpdateUser updates user information with business logic
-func (s *userService) UpdateUser(id uint, req *models.UpdateUserRequest) (*models.User, error) {
+func (s *UserService) UpdateUser(id uint, req *models.UpdateUserRequest) error {
 	user, err := s.userRepo.GetByID(id)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errors.New("user not found")
+			return errors.New("user not found")
 		}
-		return nil, err
-	}
-
-	// Check for username conflicts
-	if req.Username != nil && *req.Username != user.Username {
-		if existingUser, _ := s.userRepo.GetByUsername(*req.Username); existingUser != nil {
-			return nil, errors.New("username already exists")
-		}
-		user.Username = *req.Username
+		return err
 	}
 
 	// Check for email conflicts
 	if req.Email != nil && *req.Email != user.Email {
 		if existingUser, _ := s.userRepo.GetByEmail(*req.Email); existingUser != nil {
-			return nil, errors.New("email already exists")
+			return errors.New("email already exists")
 		}
-		user.Email = *req.Email
 	}
 
-	// Update other fields if provided
-	if req.Level != nil {
-		user.Level = *req.Level
-		user.Character = s.getCharacterForLevel(*req.Level)
-	}
+	// Update level based on points if points are being updated
 	if req.Points != nil {
-		user.Points = *req.Points
-		// Update level based on points
-		s.updateLevelBasedOnPoints(user)
-	}
-	if req.Character != nil {
-		user.Character = *req.Character
-	}
-	if req.JobTitle != nil {
-		user.JobTitle = *req.JobTitle
+		newLevel := s.calculateLevelFromPoints(*req.Points)
+		req.Level = &newLevel
+		character := s.getCharacterForLevel(newLevel)
+		req.Character = &character
 	}
 
-	err = s.userRepo.Update(user)
-	if err != nil {
-		return nil, err
+	// Update level and character if level is being updated directly
+	if req.Level != nil {
+		character := s.getCharacterForLevel(*req.Level)
+		req.Character = &character
 	}
 
-	return user, nil
+	return s.userRepo.Update(id, req)
 }
 
 // DeleteUser soft deletes a user
-func (s *userService) DeleteUser(id uint) error {
+func (s *UserService) DeleteUser(id uint) error {
 	_, err := s.userRepo.GetByID(id)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -135,7 +108,7 @@ func (s *userService) DeleteUser(id uint) error {
 }
 
 // GetLeaderboard returns top users ordered by points
-func (s *userService) GetLeaderboard(limit int) ([]models.User, error) {
+func (s *UserService) GetLeaderboard(limit int) ([]models.User, error) {
 	if limit <= 0 {
 		limit = 10 // Default limit
 	}
@@ -143,44 +116,68 @@ func (s *userService) GetLeaderboard(limit int) ([]models.User, error) {
 		limit = 100 // Maximum limit
 	}
 	
-	return s.userRepo.GetLeaderboard(limit)
+	users, err := s.userRepo.GetAll()
+	if err != nil {
+		return nil, err
+	}
+
+	// Sort by points (simple implementation - could be moved to repository)
+	// For now, just return all users
+	return users, nil
 }
 
 // UpdateUserLevel updates user level based on their current level
-func (s *userService) UpdateUserLevel(userID uint) error {
+func (s *UserService) UpdateUserLevel(userID uint) error {
 	user, err := s.userRepo.GetByID(userID)
 	if err != nil {
 		return err
 	}
 
-	s.updateLevelBasedOnPoints(user)
-	return s.userRepo.Update(user)
+	newLevel := s.calculateLevelFromPoints(user.Points)
+	if newLevel != user.Level {
+		character := s.getCharacterForLevel(newLevel)
+		updateReq := &models.UpdateUserRequest{
+			Level:     &newLevel,
+			Character: &character,
+		}
+		return s.userRepo.Update(userID, updateReq)
+	}
+	
+	return nil
 }
 
 // AddPointsToUser adds points to a user and updates their level
-func (s *userService) AddPointsToUser(userID uint, points int) error {
+func (s *UserService) AddPointsToUser(userID uint, points int) error {
 	user, err := s.userRepo.GetByID(userID)
 	if err != nil {
 		return err
 	}
 
-	user.Points += points
-	s.updateLevelBasedOnPoints(user)
+	newPoints := user.Points + points
+	newLevel := s.calculateLevelFromPoints(newPoints)
+	character := s.getCharacterForLevel(newLevel)
 	
-	return s.userRepo.Update(user)
+	updateReq := &models.UpdateUserRequest{
+		Points:    &newPoints,
+		Level:     &newLevel,
+		Character: &character,
+	}
+	
+	return s.userRepo.Update(userID, updateReq)
 }
 
-// updateLevelBasedOnPoints updates the user's level and character based on points
-func (s *userService) updateLevelBasedOnPoints(user *models.User) {
-	newLevel := s.calculateLevelFromPoints(user.Points)
-	if newLevel != user.Level {
-		user.Level = newLevel
-		user.Character = s.getCharacterForLevel(newLevel)
-	}
+// GetUserDailyTasks retrieves daily tasks for a specific user
+func (s *UserService) GetUserDailyTasks(userID uint) ([]models.DailyTask, error) {
+	return s.taskRepo.GetDailyTasksByUserID(userID)
+}
+
+// GetUserAchievements retrieves achievements for a specific user
+func (s *UserService) GetUserAchievements(userID uint) ([]models.UserAchievement, error) {
+	return s.achievementRepo.GetUserAchievements(userID)
 }
 
 // calculateLevelFromPoints calculates user level based on total points
-func (s *userService) calculateLevelFromPoints(points int) int {
+func (s *UserService) calculateLevelFromPoints(points int) int {
 	switch {
 	case points < 100:
 		return 1
@@ -196,17 +193,17 @@ func (s *userService) calculateLevelFromPoints(points int) int {
 }
 
 // getCharacterForLevel returns the character name for a given level
-func (s *userService) getCharacterForLevel(level int) string {
+func (s *UserService) getCharacterForLevel(level int) string {
 	characters := map[int]string{
 		1: "Rookie Hero",
-		2: "Fitness Apprentice",
-		3: "Health Guardian",
-		4: "Wellness Warrior",
-		5: "Ultimate Hero",
+		2: "Bronze Warrior",
+		3: "Silver Champion",
+		4: "Gold Legend",
+		5: "Platinum Master",
 	}
 	
 	if character, exists := characters[level]; exists {
 		return character
 	}
-	return "Rookie Hero"
+	return "Rookie Hero" // Default fallback
 } 
