@@ -12,19 +12,15 @@ import {
 } from '@mui/material';
 import { motion } from 'framer-motion';
 import { Person, Star, TrendingUp, EmojiEvents } from '@mui/icons-material';
-import { useQuery } from 'react-query';
-import { achievementAPI } from '../api/client';
-import { UserAchievement } from '../types';
-import { useAuth } from '../contexts/AuthContext';
+import { useUserData } from '../hooks';
 
 const Profile: React.FC = () => {
-  const { user } = useAuth();
-
-  const { data: userAchievements } = useQuery<UserAchievement[]>(
-    ['userAchievements'],
-    () => achievementAPI.getUserAchievements(),
-    { enabled: !!user }
-  );
+  const {
+    userProfile,
+    userAchievements,
+    currentPoints,
+    isLoading
+  } = useUserData();
 
   const getCharacterLevel = (points: number) => {
     if (points >= 2000) return 5;
@@ -34,7 +30,17 @@ const Profile: React.FC = () => {
     return 1;
   };
 
-  if (!user) {
+  if (isLoading) {
+    return (
+      <Container maxWidth="md" sx={{ py: 4 }}>
+        <Box display="flex" justifyContent="center" alignItems="center" minHeight="60vh">
+          <Typography variant="h6">Loading your profile... 👤</Typography>
+        </Box>
+      </Container>
+    );
+  }
+
+  if (!userProfile) {
     return (
       <Container maxWidth="md" sx={{ py: 4 }}>
         <Box display="flex" justifyContent="center" alignItems="center" minHeight="60vh">
@@ -44,7 +50,7 @@ const Profile: React.FC = () => {
     );
   }
 
-  const currentLevel = getCharacterLevel(user.points);
+  const currentLevel = getCharacterLevel(currentPoints);
 
   return (
     <Container maxWidth="md" sx={{ py: 4 }}>
@@ -56,8 +62,11 @@ const Profile: React.FC = () => {
         {/* Header */}
         <Box mb={4} textAlign="center">
           <Typography variant="h3" gutterBottom sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 2 }}>
-            <Person sx={{ fontSize: '3rem', color: '#FF6B6B' }} />
+            <Person sx={{ fontSize: '3rem', color: '#4ECDC4' }} />
             Hero Profile
+          </Typography>
+          <Typography variant="h6" color="text.secondary">
+            Your fitness journey at a glance
           </Typography>
         </Box>
 
@@ -65,34 +74,44 @@ const Profile: React.FC = () => {
         <Card sx={{ mb: 4, background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', color: 'white' }}>
           <CardContent sx={{ textAlign: 'center', p: 4 }}>
             <Avatar 
-              src={user.picture}
+              src={userProfile.picture}
               sx={{ width: 120, height: 120, mx: 'auto', mb: 3, fontSize: '3rem' }}
             >
-              {(user.first_name?.[0] || user.username?.[0] || '🦸').toUpperCase()}
+              {(userProfile.first_name?.[0] || userProfile.username?.[0] || '🦸').toUpperCase()}
             </Avatar>
+            
             <Typography variant="h4" gutterBottom>
-              {user.first_name ? `${user.first_name} ${user.last_name || ''}`.trim() : user.username}
+              {userProfile.first_name || userProfile.username}
             </Typography>
-            <Typography variant="body1" sx={{ mb: 2, opacity: 0.9 }}>
-              {user.email}
+            
+            <Box display="flex" justifyContent="center" gap={2} mb={3}>
+              <Chip
+                label={userProfile.character}
+                sx={{ 
+                  backgroundColor: 'rgba(255,255,255,0.2)', 
+                  color: 'white',
+                  fontWeight: 'bold'
+                }}
+              />
+              <Chip
+                label={`Level ${currentLevel}`}
+                sx={{ 
+                  backgroundColor: '#FFD93D', 
+                  color: '#333',
+                  fontWeight: 'bold'
+                }}
+              />
+            </Box>
+            
+            <Typography variant="h6" sx={{ opacity: 0.9 }}>
+              {userProfile.job_title}
             </Typography>
-            <Typography variant="h6" sx={{ mb: 2, opacity: 0.9 }}>
-              {user.character}
-            </Typography>
-            <Typography variant="body1" sx={{ mb: 3, opacity: 0.8 }}>
-              {user.job_title}
-            </Typography>
-            <Chip
-              label={`Level ${currentLevel}`}
-              sx={{ 
-                bgcolor: '#FFD93D', 
-                color: '#000', 
-                fontWeight: 'bold',
-                fontSize: '1rem',
-                px: 2,
-                py: 1
-              }}
-            />
+            
+            {userProfile.last_login_at && (
+              <Typography variant="body2" sx={{ mt: 2, opacity: 0.8 }}>
+                Last login: {new Date(userProfile.last_login_at).toLocaleDateString()}
+              </Typography>
+            )}
           </CardContent>
         </Card>
 
@@ -103,7 +122,7 @@ const Profile: React.FC = () => {
               <CardContent sx={{ textAlign: 'center' }}>
                 <Star sx={{ fontSize: 48, color: '#FFD93D', mb: 2 }} />
                 <Typography variant="h4" color="primary" gutterBottom>
-                  {user.points}
+                  {currentPoints}
                 </Typography>
                 <Typography variant="h6">Total Points</Typography>
               </CardContent>

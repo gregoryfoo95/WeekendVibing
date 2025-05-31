@@ -95,4 +95,17 @@ export interface GenerateDailyTasksRequest {
 export interface UnlockAchievementRequest {
   user_id: number;
   achievement_id: number;
+}
+
+export interface TaskCompletionResponse {
+  message: string;
+  points_earned: number;
+  level_up?: boolean;
+  new_level?: number;
+  achievement_unlocked?: boolean;
+}
+
+export interface AchievementUnlockResponse {
+  message: string;
+  user_achievement: UserAchievement;
 } 

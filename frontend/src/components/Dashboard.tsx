@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import {
   Container,
   Typography,
@@ -22,54 +22,27 @@ import {
   Timer,
   EmojiEvents
 } from '@mui/icons-material';
-import { useQuery, useMutation, useQueryClient } from 'react-query';
-import { taskAPI } from '../api/client';
+import { useUserData, useTaskActions } from '../hooks';
 import { DailyTask } from '../types';
-import { useAuth } from '../contexts/AuthContext';
 
 const Dashboard: React.FC = () => {
-  const { user } = useAuth();
-  const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' as 'success' | 'error' });
-  const queryClient = useQueryClient();
+  const {
+    userProfile,
+    dailyTasks,
+    isLoading,
+    completedTasks,
+    totalTasks,
+    currentPoints
+  } = useUserData();
 
-  // Fetch daily tasks for authenticated user
-  const { data: dailyTasks, isLoading: tasksLoading } = useQuery<DailyTask[]>(
-    ['dailyTasks'],
-    () => taskAPI.getDailyTasks(),
-    { enabled: !!user }
-  );
-
-  // Generate daily tasks mutation
-  const generateTasksMutation = useMutation(
-    () => taskAPI.generateDailyTasks(),
-    {
-      onSuccess: () => {
-        queryClient.invalidateQueries(['dailyTasks']);
-        setSnackbar({ open: true, message: 'New daily tasks generated! 🎯', severity: 'success' });
-      },
-      onError: () => {
-        setSnackbar({ open: true, message: 'Failed to generate tasks', severity: 'error' });
-      }
-    }
-  );
-
-  // Complete task mutation
-  const completeTaskMutation = useMutation(
-    (taskId: number) => taskAPI.completeTask(taskId),
-    {
-      onSuccess: (data) => {
-        queryClient.invalidateQueries(['dailyTasks']);
-        setSnackbar({ 
-          open: true, 
-          message: `Great job! You earned ${data.points_earned} points! 🌟`, 
-          severity: 'success' 
-        });
-      },
-      onError: () => {
-        setSnackbar({ open: true, message: 'Failed to complete task', severity: 'error' });
-      }
-    }
-  );
+  const {
+    completeTask,
+    generateTasks,
+    isCompletingTask,
+    isGeneratingTasks,
+    notification,
+    hideNotification
+  } = useTaskActions();
 
   const getDifficultyColor = (difficulty: string) => {
     switch (difficulty) {
@@ -103,7 +76,7 @@ const Dashboard: React.FC = () => {
     return levels[level] || 2000;
   };
 
-  if (tasksLoading) {
+  if (isLoading) {
     return (
       <Container maxWidth="lg" sx={{ py: 4 }}>
         <Box display="flex" justifyContent="center" alignItems="center" minHeight="60vh">
@@ -113,7 +86,7 @@ const Dashboard: React.FC = () => {
     );
   }
 
-  if (!user) {
+  if (!userProfile) {
     return (
       <Container maxWidth="lg" sx={{ py: 4 }}>
         <Alert severity="error">Authentication required. Please sign in.</Alert>
@@ -121,12 +94,10 @@ const Dashboard: React.FC = () => {
     );
   }
 
-  const completedTasks = dailyTasks?.filter(task => task.is_completed).length || 0;
-  const totalTasks = dailyTasks?.length || 0;
   const progressPercentage = totalTasks > 0 ? (completedTasks / totalTasks) * 100 : 0;
-  const currentLevel = getCharacterLevel(user.points);
+  const currentLevel = getCharacterLevel(currentPoints);
   const nextLevelPoints = getNextLevelPoints(currentLevel);
-  const levelProgress = currentLevel < 5 ? ((user.points % nextLevelPoints) / nextLevelPoints) * 100 : 100;
+  const levelProgress = currentLevel < 5 ? ((currentPoints % nextLevelPoints) / nextLevelPoints) * 100 : 100;
 
   return (
     <Container maxWidth="lg" sx={{ py: 4 }}>
@@ -138,7 +109,7 @@ const Dashboard: React.FC = () => {
         {/* Header */}
         <Box mb={4}>
           <Typography variant="h3" gutterBottom>
-            Welcome back, {user.first_name || user.username}! 🦸‍♂️
+            Welcome back, {userProfile.first_name || userProfile.username}! 🦸‍♂️
           </Typography>
           <Typography variant="h6" color="text.secondary">
             Ready for today's fitness adventure?
@@ -152,16 +123,16 @@ const Dashboard: React.FC = () => {
             <Card sx={{ background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', color: 'white' }}>
               <CardContent sx={{ textAlign: 'center', p: 3 }}>
                 <Avatar 
-                  src={user.picture}
+                  src={userProfile.picture}
                   sx={{ width: 80, height: 80, mx: 'auto', mb: 2, fontSize: '2rem' }}
                 >
-                  {(user.first_name?.[0] || user.username?.[0] || '🦸').toUpperCase()}
+                  {(userProfile.first_name?.[0] || userProfile.username?.[0] || '🦸').toUpperCase()}
                 </Avatar>
                 <Typography variant="h6" gutterBottom>
-                  {user.character}
+                  {userProfile.character}
                 </Typography>
                 <Typography variant="body2" sx={{ mb: 2, opacity: 0.9 }}>
-                  {user.job_title}
+                  {userProfile.job_title}
                 </Typography>
                 <Box sx={{ mb: 2 }}>
                   <Typography variant="h4" sx={{ fontWeight: 'bold' }}>
@@ -181,7 +152,7 @@ const Dashboard: React.FC = () => {
                     }} 
                   />
                   <Typography variant="caption" sx={{ opacity: 0.9 }}>
-                    {user.points} / {nextLevelPoints} XP
+                    {currentPoints} / {nextLevelPoints} XP
                   </Typography>
                 </Box>
               </CardContent>
@@ -194,7 +165,7 @@ const Dashboard: React.FC = () => {
               <CardContent sx={{ textAlign: 'center', p: 3 }}>
                 <Stars sx={{ fontSize: 48, color: '#FFD93D', mb: 2 }} />
                 <Typography variant="h4" color="primary" gutterBottom>
-                  {user.points}
+                  {currentPoints}
                 </Typography>
                 <Typography variant="h6" gutterBottom>
                   Total Points
@@ -240,11 +211,11 @@ const Dashboard: React.FC = () => {
               </Typography>
               <Button
                 variant="outlined"
-                onClick={() => generateTasksMutation.mutate()}
-                disabled={generateTasksMutation.isLoading}
+                onClick={() => generateTasks()}
+                disabled={isGeneratingTasks}
                 startIcon={<Timer />}
               >
-                {generateTasksMutation.isLoading ? 'Generating...' : 'New Tasks'}
+                {isGeneratingTasks ? 'Generating...' : 'New Tasks'}
               </Button>
             </Box>
 
@@ -306,8 +277,8 @@ const Dashboard: React.FC = () => {
                         <Button
                           fullWidth
                           variant="contained"
-                          disabled={dailyTask.is_completed || completeTaskMutation.isLoading}
-                          onClick={() => completeTaskMutation.mutate(dailyTask.id)}
+                          disabled={dailyTask.is_completed || isCompletingTask}
+                          onClick={() => completeTask(dailyTask.id)}
                           startIcon={dailyTask.is_completed ? <CheckCircle /> : <EmojiEvents />}
                           sx={{
                             backgroundColor: dailyTask.is_completed ? '#4CAF50' : undefined,
@@ -338,16 +309,16 @@ const Dashboard: React.FC = () => {
 
       {/* Snackbar for notifications */}
       <Snackbar
-        open={snackbar.open}
+        open={notification.open}
         autoHideDuration={4000}
-        onClose={() => setSnackbar({ ...snackbar, open: false })}
+        onClose={hideNotification}
       >
         <Alert 
-          severity={snackbar.severity} 
-          onClose={() => setSnackbar({ ...snackbar, open: false })}
+          severity={notification.severity} 
+          onClose={hideNotification}
           sx={{ width: '100%' }}
         >
-          {snackbar.message}
+          {notification.message}
         </Alert>
       </Snackbar>
     </Container>

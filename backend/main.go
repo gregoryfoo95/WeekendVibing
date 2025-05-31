@@ -171,6 +171,7 @@ func main() {
 		{
 			public.GET("/tasks", taskController.GetAllTasks)
 			public.GET("/achievements", achievementController.GetAllAchievements)
+			public.GET("/leaderboard", userController.GetLeaderboard)
 		}
 
 		// Admin routes (for user creation - could be expanded)

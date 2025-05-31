@@ -28,10 +28,10 @@ import {
   Work,
   Shield
 } from '@mui/icons-material';
-import { useQuery, useMutation, useQueryClient } from 'react-query';
+import { useQuery } from 'react-query';
 import { achievementAPI } from '../api/client';
 import { Achievement, UserAchievement } from '../types';
-import { useAuth } from '../contexts/AuthContext';
+import { useUserData, useAchievementActions } from '../hooks';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -50,56 +50,33 @@ function TabPanel(props: TabPanelProps) {
       aria-labelledby={`achievement-tab-${index}`}
       {...other}
     >
-      {value === index && children}
+      {value === index && <Box>{children}</Box>}
     </div>
   );
 }
 
 const Achievements: React.FC = () => {
-  const { user } = useAuth();
   const [tabValue, setTabValue] = useState(0);
   const [selectedAchievement, setSelectedAchievement] = useState<Achievement | null>(null);
   const [confirmDialog, setConfirmDialog] = useState(false);
-  const [snackbar, setSnackbar] = useState({ 
-    open: false, 
-    message: '', 
-    severity: 'success' as 'success' | 'error' 
-  });
-  const queryClient = useQueryClient();
+
+  const {
+    userProfile,
+    userAchievements,
+    currentPoints
+  } = useUserData();
+
+  const {
+    unlockAchievement,
+    isUnlockingAchievement,
+    notification,
+    hideNotification
+  } = useAchievementActions();
 
   // Fetch all achievements
   const { data: achievements } = useQuery<Achievement[]>(
     'achievements',
     achievementAPI.getAll
-  );
-
-  // Fetch user achievements
-  const { data: userAchievements } = useQuery<UserAchievement[]>(
-    ['userAchievements'],
-    () => achievementAPI.getUserAchievements(),
-    { enabled: !!user }
-  );
-
-  // Unlock achievement mutation
-  const unlockMutation = useMutation(
-    (achievementId: number) => achievementAPI.unlock(achievementId),
-    {
-      onSuccess: () => {
-        queryClient.invalidateQueries(['userAchievements']);
-        setSnackbar({ 
-          open: true, 
-          message: 'Achievement unlocked! 🎉', 
-          severity: 'success' 
-        });
-        setConfirmDialog(false);
-        setSelectedAchievement(null);
-      },
-      onError: (error: any) => {
-        const message = error.response?.data?.error || 'Failed to unlock achievement';
-        setSnackbar({ open: true, message, severity: 'error' });
-        setConfirmDialog(false);
-      }
-    }
   );
 
   const handleUnlock = (achievement: Achievement) => {
@@ -109,7 +86,9 @@ const Achievements: React.FC = () => {
 
   const confirmUnlock = () => {
     if (selectedAchievement) {
-      unlockMutation.mutate(selectedAchievement.id);
+      unlockAchievement(selectedAchievement.id);
+      setConfirmDialog(false);
+      setSelectedAchievement(null);
     }
   };
 
@@ -148,7 +127,7 @@ const Achievements: React.FC = () => {
   const unlockedCount = userAchievements?.length || 0;
   const totalCount = achievements?.length || 0;
 
-  if (!user) {
+  if (!userProfile) {
     return (
       <Container maxWidth="lg" sx={{ py: 4 }}>
         <Alert severity="error">Authentication required. Please sign in.</Alert>
@@ -178,7 +157,7 @@ const Achievements: React.FC = () => {
             <CardContent sx={{ textAlign: 'center' }}>
               <Grid container spacing={3}>
                 <Grid item xs={12} md={4}>
-                  <Typography variant="h4">{user?.points || 0}</Typography>
+                  <Typography variant="h4">{currentPoints}</Typography>
                   <Typography variant="body1">Available Points</Typography>
                 </Grid>
                 <Grid item xs={12} md={4}>
@@ -209,7 +188,7 @@ const Achievements: React.FC = () => {
           <Grid container spacing={3}>
             {filteredAchievements.map((achievement) => {
               const unlocked = isUnlocked(achievement.id);
-              const canAfford = (user?.points || 0) >= achievement.points_cost;
+              const canAfford = currentPoints >= achievement.points_cost;
               
               return (
                 <Grid item xs={12} sm={6} md={4} key={achievement.id}>
@@ -285,7 +264,7 @@ const Achievements: React.FC = () => {
                         <Button
                           fullWidth
                           variant={unlocked ? "outlined" : "contained"}
-                          disabled={unlocked || !canAfford || unlockMutation.isLoading}
+                          disabled={unlocked || !canAfford || isUnlockingAchievement}
                           onClick={() => handleUnlock(achievement)}
                           sx={{
                             backgroundColor: unlocked ? undefined : 
@@ -313,25 +292,29 @@ const Achievements: React.FC = () => {
               Are you sure you want to unlock "{selectedAchievement?.title}" for {selectedAchievement?.points_cost} points?
             </Typography>
             <Typography variant="body2" color="text.secondary">
-              You currently have {user?.points || 0} points.
+              You currently have {currentPoints} points.
             </Typography>
           </DialogContent>
           <DialogActions>
             <Button onClick={() => setConfirmDialog(false)}>Cancel</Button>
-            <Button onClick={confirmUnlock} variant="contained" disabled={unlockMutation.isLoading}>
-              {unlockMutation.isLoading ? 'Unlocking...' : 'Unlock'}
+            <Button onClick={confirmUnlock} variant="contained" disabled={isUnlockingAchievement}>
+              {isUnlockingAchievement ? 'Unlocking...' : 'Unlock'}
             </Button>
           </DialogActions>
         </Dialog>
 
         {/* Snackbar for notifications */}
         <Snackbar
-          open={snackbar.open}
+          open={notification.open}
           autoHideDuration={4000}
-          onClose={() => setSnackbar({ ...snackbar, open: false })}
+          onClose={hideNotification}
         >
-          <Alert severity={snackbar.severity} onClose={() => setSnackbar({ ...snackbar, open: false })}>
-            {snackbar.message}
+          <Alert 
+            severity={notification.severity} 
+            onClose={hideNotification}
+            sx={{ width: '100%' }}
+          >
+            {notification.message}
           </Alert>
         </Snackbar>
       </motion.div>

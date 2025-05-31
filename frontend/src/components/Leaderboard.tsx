@@ -22,7 +22,15 @@ import { User } from '../types';
 const Leaderboard: React.FC = () => {
   const { data: topUsers, isLoading } = useQuery<User[]>(
     'leaderboard',
-    () => leaderboardAPI.getTop(20)
+    () => leaderboardAPI.getTop(20),
+    {
+      staleTime: 1000 * 10, // 10 seconds - much more aggressive
+      cacheTime: 1000 * 60 * 5, // 5 minutes cache
+      refetchInterval: 1000 * 30, // Auto-refetch every 30 seconds instead of 2 minutes
+      refetchOnWindowFocus: true,
+      refetchOnMount: true, // Always refetch on mount
+      refetchOnReconnect: true, // Refetch when connection restored
+    }
   );
 
   const getRankEmoji = (rank: number) => {

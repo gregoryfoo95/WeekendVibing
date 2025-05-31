@@ -11,6 +11,7 @@ type UserRepositoryInterface interface {
 	GetByEmail(email string) (*models.User, error)
 	GetByGoogleID(googleID string) (*models.User, error)
 	GetAll() ([]models.User, error)
+	GetTopUsersByPoints(limit int) ([]models.User, error)
 	Update(id uint, updates *models.UpdateUserRequest) error
 	Delete(id uint) error
 }
@@ -57,6 +58,17 @@ func (r *UserRepository) GetByGoogleID(googleID string) (*models.User, error) {
 func (r *UserRepository) GetAll() ([]models.User, error) {
 	var users []models.User
 	if err := r.db.Find(&users).Error; err != nil {
+		return nil, err
+	}
+	return users, nil
+}
+
+func (r *UserRepository) GetTopUsersByPoints(limit int) ([]models.User, error) {
+	var users []models.User
+	if err := r.db.Where("is_active = ?", true).
+		Order("points DESC").
+		Limit(limit).
+		Find(&users).Error; err != nil {
 		return nil, err
 	}
 	return users, nil

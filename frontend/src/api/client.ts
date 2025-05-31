@@ -9,7 +9,9 @@ import {
   GenerateDailyTasksRequest,
   UnlockAchievementRequest,
   AuthUser,
-  AuthResponse
+  AuthResponse,
+  TaskCompletionResponse,
+  AchievementUnlockResponse
 } from '../types';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
@@ -36,10 +38,10 @@ apiClient.interceptors.request.use(
 // Add response interceptor to handle authentication errors
 apiClient.interceptors.response.use(
   (response) => response,
-  (error) => {
+  async (error) => {
     if (error.response?.status === 401) {
       // Redirect to login or handle unauthorized access
-      window.location.href = '/';
+      console.warn('Unauthorized request, user may need to re-authenticate');
     }
     return Promise.reject(error);
   }
@@ -65,14 +67,14 @@ export const authAPI = {
 
   // Get current user profile
   me: (): Promise<AuthUser> =>
-    apiClient.get('/me').then(res => res.data.user),
+    apiClient.get('/me').then(res => res.data),
 
   // Logout
   logout: (): Promise<void> =>
     apiClient.post('/auth/logout').then(res => res.data),
 
   // Refresh token
-  refreshToken: (): Promise<AuthResponse> =>
+  refresh: (): Promise<{ token: string }> =>
     apiClient.post('/auth/refresh').then(res => res.data),
 };
 
@@ -102,6 +104,14 @@ export const userAPI = {
   // Get current user's achievements
   getCurrentUserAchievements: (): Promise<UserAchievement[]> =>
     apiClient.get('/users/achievements').then(res => res.data),
+
+  // Get user profile
+  getProfile: (): Promise<User> =>
+    apiClient.get('/profile').then(res => res.data),
+
+  // Update user profile
+  updateProfile: (userData: Partial<User>): Promise<User> =>
+    apiClient.put('/profile', userData).then(res => res.data),
 };
 
 // Task API
@@ -115,7 +125,7 @@ export const taskAPI = {
   generateDailyTasks: (): Promise<DailyTask[]> =>
     apiClient.post('/tasks/daily/generate').then(res => res.data.tasks),
   
-  completeTask: (taskId: number): Promise<{ message: string; points_earned: number }> =>
+  completeTask: (taskId: number): Promise<TaskCompletionResponse> =>
     apiClient.post(`/tasks/daily/${taskId}/complete`).then(res => res.data),
 };
 
@@ -127,7 +137,7 @@ export const achievementAPI = {
   getUserAchievements: (): Promise<UserAchievement[]> =>
     apiClient.get('/achievements/user').then(res => res.data.achievements),
   
-  unlock: (achievementId: number): Promise<void> =>
+  unlock: (achievementId: number): Promise<AchievementUnlockResponse> =>
     apiClient.post(`/achievements/${achievementId}/unlock`).then(res => res.data),
 };
 

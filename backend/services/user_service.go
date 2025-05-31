@@ -116,14 +116,8 @@ func (s *UserService) GetLeaderboard(limit int) ([]models.User, error) {
 		limit = 100 // Maximum limit
 	}
 	
-	users, err := s.userRepo.GetAll()
-	if err != nil {
-		return nil, err
-	}
-
-	// Sort by points (simple implementation - could be moved to repository)
-	// For now, just return all users
-	return users, nil
+	// Get users sorted by points in descending order
+	return s.userRepo.GetTopUsersByPoints(limit)
 }
 
 // UpdateUserLevel updates user level based on their current level

@@ -80,7 +80,21 @@ const theme = createTheme({
   },
 });
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 1000 * 30, // 30 seconds default (was 5 minutes) - more aggressive
+      cacheTime: 1000 * 60 * 10, // 10 minutes cache time
+      refetchOnWindowFocus: true,
+      refetchOnMount: true, // Always refetch on mount
+      refetchOnReconnect: true, // Refetch when connection restored
+      retry: 2,
+    },
+    mutations: {
+      retry: 1,
+    },
+  },
+});
 
 function App() {
   return (
